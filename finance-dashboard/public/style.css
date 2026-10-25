@@ -1,0 +1,90 @@
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --text: #1c1f24;
+  --muted: #6b7280;
+  --border: #e3e6ea;
+  --accent: #2357d9;
+  --positive: #1a7f4b;
+  --negative: #c0392b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317;
+    --surface: #1b1e24;
+    --text: #e8eaed;
+    --muted: #9aa0a8;
+    --border: #2c3038;
+    --accent: #6b93ff;
+    --positive: #4cc38a;
+    --negative: #ff7b6e;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 1.5rem; margin: 0; }
+h2 { font-size: 1.05rem; margin: 0; }
+
+#lock-screen { max-width: 380px; margin: 12vh auto 0; }
+#lock-screen h1 { margin-bottom: 8px; }
+#lock-form { display: grid; gap: 12px; margin-top: 16px; }
+label { display: grid; gap: 4px; font-weight: 500; }
+
+input {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  font-weight: 500;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
+button.small { padding: 4px 10px; font-size: 0.85rem; }
+button:disabled { opacity: 0.6; cursor: default; }
+
+.topbar { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 20px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card-label { color: var(--muted); font-size: 0.85rem; }
+.card-value { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.card-note { color: var(--muted); font-size: 0.8rem; }
+
+.connection { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.conn-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+
+table { width: 100%; border-collapse: collapse; }
+td { padding: 8px 4px; border-top: 1px solid var(--border); }
+td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.muted { color: var(--muted); }
+.positive .card-value { color: var(--positive); }
+td.negative, .negative .card-value { color: var(--negative); }
+.error { color: var(--negative); min-height: 0; margin: 8px 0 0; }
+.error:empty { display: none; }
+
+@media (max-width: 560px) {
+  td:nth-child(2) { display: none; }
+}
