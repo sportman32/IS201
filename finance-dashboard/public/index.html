@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Finances</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <section id="lock-screen" hidden>
+      <h1>My Finances</h1>
+      <p id="lock-intro"></p>
+      <form id="lock-form" autocomplete="off">
+        <label>Passphrase
+          <input type="password" id="passphrase" required minlength="12" autocomplete="current-password">
+        </label>
+        <label id="confirm-row" hidden>Confirm passphrase
+          <input type="password" id="passphrase-confirm" minlength="12" autocomplete="new-password">
+        </label>
+        <button type="submit" id="lock-submit"></button>
+        <p class="error" id="lock-error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <header class="topbar">
+        <h1>My Finances</h1>
+        <div class="actions">
+          <button id="connect-btn">+ Connect account</button>
+          <button id="refresh-btn" class="secondary">Refresh</button>
+          <button id="lock-btn" class="secondary">Lock</button>
+        </div>
+      </header>
+      <p class="muted" id="env-banner"></p>
+      <p class="error" id="dash-error" role="alert"></p>
+
+      <div class="cards" id="totals"></div>
+      <p class="muted" id="updated-at"></p>
+
+      <div id="connections"></div>
+      <p class="muted" id="empty-state" hidden>No accounts connected yet. Click <b>+ Connect account</b> to add your first bank or credit card.</p>
+    </section>
+  </main>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
