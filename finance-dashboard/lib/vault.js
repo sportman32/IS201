@@ -14,9 +14,21 @@ const FORMAT_VERSION = 1;
 // scrypt cost: N=2^17 takes roughly 0.3-1s per guess, making brute force slow.
 const SCRYPT = { N: 2 ** 17, r: 8, p: 1, maxmem: 256 * 1024 * 1024 };
 const KEY_LEN = 32;
-const MIN_PASSPHRASE_LEN = 12;
+const MIN_PASSPHRASE_LEN = 16;
+const MIN_DISTINCT_CHARS = 8;
 
 class WrongPassphraseError extends Error {}
+
+// Returns an error message, or null if the passphrase is acceptable.
+function checkPassphrase(passphrase) {
+  if (typeof passphrase !== 'string' || passphrase.length < MIN_PASSPHRASE_LEN) {
+    return `Passphrase must be at least ${MIN_PASSPHRASE_LEN} characters.`;
+  }
+  if (new Set(passphrase).size < MIN_DISTINCT_CHARS) {
+    return 'Passphrase is too repetitive. Try several random words.';
+  }
+  return null;
+}
 
 function deriveKey(passphrase, salt, params = SCRYPT) {
   return new Promise((resolve, reject) => {
@@ -63,12 +75,11 @@ class Vault {
 
   async create(passphrase) {
     if (this.exists()) throw new Error('Vault already exists.');
-    if (typeof passphrase !== 'string' || passphrase.length < MIN_PASSPHRASE_LEN) {
-      throw new Error(`Passphrase must be at least ${MIN_PASSPHRASE_LEN} characters.`);
-    }
+    const problem = checkPassphrase(passphrase);
+    if (problem) throw new Error(problem);
     this.salt = crypto.randomBytes(16);
     this.key = await deriveKey(passphrase, this.salt, this.scryptParams);
-    this.data = { items: [] };
+    this.data = { plaid: null, items: [] };
     this.save();
   }
 
@@ -104,6 +115,18 @@ class Vault {
     fs.renameSync(tmp, this.filePath);
   }
 
+  // Plaid API keys ({ env, clientId, secret }) live inside the encrypted vault, never in plain files.
+  getPlaidConfig() {
+    if (!this.isUnlocked()) throw new Error('Vault is locked.');
+    return this.data.plaid || null;
+  }
+
+  setPlaidConfig(config) {
+    if (!this.isUnlocked()) throw new Error('Vault is locked.');
+    this.data.plaid = config;
+    this.save();
+  }
+
   listItems() {
     if (!this.isUnlocked()) throw new Error('Vault is locked.');
     return this.data.items;
@@ -121,6 +144,12 @@ class Vault {
     this.data.items = this.listItems().filter((i) => i.itemId !== itemId);
     this.save();
   }
+
+  clearItems() {
+    this.listItems();
+    this.data.items = [];
+    this.save();
+  }
 }
 
-module.exports = { Vault, WrongPassphraseError, MIN_PASSPHRASE_LEN };
+module.exports = { Vault, WrongPassphraseError, checkPassphrase, MIN_PASSPHRASE_LEN };

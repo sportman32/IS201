@@ -48,10 +48,25 @@ test('detects tampering', async () => {
   await assert.rejects(new Vault(file, fast).unlock('correct horse battery'), WrongPassphraseError);
 });
 
-test('rejects short passphrases and refuses access when locked', async () => {
+test('rejects weak passphrases and refuses access when locked', async () => {
   const v = new Vault(tmpFile(), fast);
-  await assert.rejects(v.create('short'), /at least 12/);
+  await assert.rejects(v.create('fifteen chars!!'), /at least 16/);
+  await assert.rejects(v.create('abababababababababab'), /repetitive/);
   assert.throws(() => v.listItems(), /locked/);
+  assert.throws(() => v.getPlaidConfig(), /locked/);
+});
+
+test('stores Plaid keys encrypted', async () => {
+  const file = tmpFile();
+  const v = new Vault(file, fast);
+  await v.create('correct horse battery');
+  assert.strictEqual(v.getPlaidConfig(), null);
+  v.setPlaidConfig({ env: 'sandbox', clientId: 'client123456', secret: 'supersecretvalue123' });
+  assert.ok(!fs.readFileSync(file, 'utf8').includes('supersecretvalue123'), 'secret must not appear in plaintext');
+  v.lock();
+  const v2 = new Vault(file, fast);
+  await v2.unlock('correct horse battery');
+  assert.strictEqual(v2.getPlaidConfig().secret, 'supersecretvalue123');
 });
 
 test('updates and removes items', async () => {
@@ -62,5 +77,8 @@ test('updates and removes items', async () => {
   assert.strictEqual(v.listItems().length, 1);
   assert.strictEqual(v.listItems()[0].institutionName, 'Renamed');
   v.removeItem('item-1');
+  assert.deepStrictEqual(v.listItems(), []);
+  v.addItem(item);
+  v.clearItems();
   assert.deepStrictEqual(v.listItems(), []);
 });

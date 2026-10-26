@@ -2,12 +2,16 @@
 
 const $ = (id) => document.getElementById(id);
 let vaultExists = false;
+let linkOpen = false;
+
+// Lock after this long with the tab in the background (switched away or minimized).
+const AWAY_LOCK_MS = 60 * 1000;
 
 async function api(method, url, body) {
   const res = await fetch(url, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: method === 'GET' ? {} : { 'Content-Type': 'application/json' },
+    body: method === 'GET' ? undefined : JSON.stringify(body || {}),
     credentials: 'same-origin',
   });
   const data = await res.json().catch(() => ({}));
@@ -41,17 +45,46 @@ function el(tag, attrs = {}, ...children) {
 
 function showLockScreen() {
   $('dashboard').hidden = true;
+  $('settings').hidden = true;
+  $('totals').replaceChildren();
+  $('connections').replaceChildren();
   $('lock-screen').hidden = false;
   $('confirm-row').hidden = vaultExists;
+  $('strength').hidden = vaultExists;
   $('passphrase-confirm').required = !vaultExists;
+  $('passphrase').minLength = vaultExists ? 1 : 16;
+  $('passphrase').autocomplete = vaultExists ? 'current-password' : 'new-password';
   $('lock-intro').textContent = vaultExists
     ? 'Enter your passphrase to unlock.'
-    : 'Create a passphrase (12+ characters). It encrypts your saved bank connections. It cannot be recovered if you forget it. You would just reconnect your accounts.';
+    : 'Create a passphrase of at least 16 characters. Several random words work well, e.g. "maple orbit candle frozen tiger". '
+      + 'It encrypts your Plaid keys and bank connections. It can\'t be recovered, so save it in a password manager.';
   $('lock-submit').textContent = vaultExists ? 'Unlock' : 'Create vault';
   $('passphrase').value = '';
   $('passphrase-confirm').value = '';
+  $('strength').textContent = '';
   $('passphrase').focus();
 }
+
+// Rough strength estimate shown while creating a passphrase. The server enforces the real rules.
+function passphraseStrength(p) {
+  let pool = 0;
+  if (/[a-z]/.test(p)) pool += 26;
+  if (/[A-Z]/.test(p)) pool += 26;
+  if (/[0-9]/.test(p)) pool += 10;
+  if (/[^A-Za-z0-9]/.test(p)) pool += 33;
+  const bits = Math.round(p.length * Math.log2(pool || 1) * Math.min(1, new Set(p).size / 10));
+  if (p.length < 16) return ['weak', `Too short: ${p.length}/16 characters`];
+  if (new Set(p).size < 8) return ['weak', 'Too repetitive'];
+  if (bits < 80) return ['ok', 'Okay. Longer is better'];
+  return ['strong', 'Strong'];
+}
+
+$('passphrase').addEventListener('input', () => {
+  if (vaultExists) return;
+  const [level, label] = passphraseStrength($('passphrase').value);
+  $('strength').className = `strength ${level}`;
+  $('strength').textContent = $('passphrase').value ? label : '';
+});
 
 $('lock-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -80,6 +113,12 @@ $('lock-form').addEventListener('submit', async (e) => {
 async function showDashboard() {
   $('lock-screen').hidden = true;
   $('dashboard').hidden = false;
+  const settings = await loadSettings();
+  if (!settings) return;
+  if (!settings.secretSaved) {
+    openSettings('Add your Plaid keys to get started. They are stored encrypted in your vault.');
+    return;
+  }
   await loadAccounts();
 }
 
@@ -152,7 +191,7 @@ function renderConnections(connections) {
 async function removeConnection(c) {
   if (!confirm(`Remove ${c.institutionName}? Its access will be revoked.`)) return;
   try {
-    await api('DELETE', `/api/items/${encodeURIComponent(c.itemId)}`);
+    await api('POST', '/api/items/remove', { itemId: c.itemId });
     await loadAccounts();
   } catch (err) {
     $('dash-error').textContent = err.message;
@@ -171,6 +210,7 @@ async function openLink(itemId) {
     const handler = Plaid.create({
       token: linkToken,
       onSuccess: async (publicToken, metadata) => {
+        linkOpen = false;
         try {
           if (!itemId) await api('POST', '/api/exchange', { publicToken, institution: metadata.institution });
           await loadAccounts();
@@ -178,31 +218,111 @@ async function openLink(itemId) {
           $('dash-error').textContent = err.message;
         }
       },
-      onExit: (err) => { if (err) $('dash-error').textContent = err.display_message || err.error_message || 'Connection cancelled.'; },
+      onExit: (err) => {
+        linkOpen = false;
+        if (err) $('dash-error').textContent = err.display_message || err.error_message || 'Connection cancelled.';
+      },
     });
+    linkOpen = true;
     handler.open();
   } catch (err) {
     if (err.message !== 'Locked') $('dash-error').textContent = err.message;
   }
 }
 
+// --- Settings (Plaid keys) ---------------------------------------------------
+
+let savedEnv = null;
+
+async function loadSettings() {
+  try {
+    const s = await api('GET', '/api/settings');
+    savedEnv = s.secretSaved ? s.env : null;
+    $('env-banner').textContent = savedEnv === 'sandbox'
+      ? 'Sandbox mode: fake test banks only. Use username "user_good" / password "pass_good".'
+      : '';
+    $('plaid-env').value = s.env;
+    $('plaid-client-id').value = s.clientId;
+    $('plaid-secret').value = '';
+    $('plaid-secret').placeholder = s.secretSaved ? 'Saved. Leave blank to keep it' : '';
+    return s;
+  } catch (err) {
+    if (err.message !== 'Locked') $('dash-error').textContent = err.message;
+    return null;
+  }
+}
+
+function openSettings(message = '') {
+  $('settings-intro').textContent = message;
+  $('settings-error').textContent = '';
+  $('settings').hidden = false;
+  $('plaid-client-id').focus();
+}
+
+$('settings-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('settings-error').textContent = '';
+  const env = $('plaid-env').value;
+  if (savedEnv && env !== savedEnv
+    && !confirm(`Switching to ${env} removes and revokes all connected accounts. Continue?`)) return;
+  try {
+    await api('PUT', '/api/settings', { env, clientId: $('plaid-client-id').value, secret: $('plaid-secret').value });
+    $('plaid-secret').value = '';
+    $('settings').hidden = true;
+    await loadSettings();
+    await loadAccounts();
+  } catch (err) {
+    if (err.message !== 'Locked') $('settings-error').textContent = err.message;
+  }
+});
+
+$('settings-cancel').addEventListener('click', () => { $('settings').hidden = true; });
+
+// --- Locking -----------------------------------------------------------------
+
+async function lockNow() {
+  clearTimeout(awayTimer);
+  await api('POST', '/api/lock').catch(() => {});
+  showLockScreen();
+}
+
+// Closing, reloading or navigating away from the tab locks immediately.
+// keepalive lets the request finish even as the page unloads.
+window.addEventListener('pagehide', () => {
+  fetch('/api/lock', {
+    method: 'POST', keepalive: true, credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+});
+
+// Leaving the tab in the background locks after AWAY_LOCK_MS. Plaid's login
+// window can briefly background the tab, so that doesn't count.
+let awayTimer = null;
+let hiddenAt = null;
+document.addEventListener('visibilitychange', () => {
+  if ($('dashboard').hidden) return;
+  if (document.visibilityState === 'hidden') {
+    if (linkOpen) return;
+    hiddenAt = Date.now();
+    awayTimer = setTimeout(lockNow, AWAY_LOCK_MS);
+  } else {
+    clearTimeout(awayTimer);
+    // Background tabs can delay timers, so also check how long we were away.
+    if (hiddenAt && Date.now() - hiddenAt >= AWAY_LOCK_MS) lockNow();
+    hiddenAt = null;
+  }
+});
+
 $('connect-btn').addEventListener('click', () => openLink());
 $('refresh-btn').addEventListener('click', loadAccounts);
-$('lock-btn').addEventListener('click', async () => {
-  await api('POST', '/api/lock').catch(() => {});
-  $('totals').replaceChildren();
-  $('connections').replaceChildren();
-  showLockScreen();
-});
+$('settings-btn').addEventListener('click', () => openSettings());
+$('lock-btn').addEventListener('click', lockNow);
 
 // --- Startup -----------------------------------------------------------------
 
 (async () => {
   const status = await api('GET', '/api/status');
   vaultExists = status.vaultExists;
-  $('env-banner').textContent = status.plaidEnv === 'sandbox'
-    ? 'Sandbox mode: fake test banks only. Use username "user_good" / password "pass_good".'
-    : '';
   if (status.unlocked) showDashboard();
   else showLockScreen();
 })();
