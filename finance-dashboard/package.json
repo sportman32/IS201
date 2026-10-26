@@ -1,19 +1,15 @@
 {
   "name": "finance-dashboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "Personal, local-only dashboard that shows balances from all bank and credit card accounts via Plaid.",
+  "description": "Personal, local-only dashboard that shows balances from all bank and credit card accounts via Plaid. No third-party dependencies.",
   "main": "server.js",
   "type": "commonjs",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "start": "node --env-file=.env server.js",
+    "start": "node server.js",
     "test": "node --test"
-  },
-  "dependencies": {
-    "express": "5.1.0",
-    "plaid": "49.0.0"
   }
 }

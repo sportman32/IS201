@@ -40,7 +40,7 @@ h2 { font-size: 1.05rem; margin: 0; }
 #lock-form { display: grid; gap: 12px; margin-top: 16px; }
 label { display: grid; gap: 4px; font-weight: 500; }
 
-input {
+input, select {
   font: inherit;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -78,6 +78,16 @@ button:disabled { opacity: 0.6; cursor: default; }
 table { width: 100%; border-collapse: collapse; }
 td { padding: 8px 4px; border-top: 1px solid var(--border); }
 td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.panel form { display: grid; gap: 12px; max-width: 420px; margin-top: 8px; }
+.panel p { margin: 4px 0; }
+
+.strength { margin: -4px 0 0; font-size: 0.85rem; }
+.strength:empty { display: none; }
+.strength.weak { color: var(--negative); }
+.strength.ok { color: var(--muted); }
+.strength.strong { color: var(--positive); }
 
 .muted { color: var(--muted); }
 .positive .card-value { color: var(--positive); }

@@ -13,10 +13,11 @@
       <p id="lock-intro"></p>
       <form id="lock-form" autocomplete="off">
         <label>Passphrase
-          <input type="password" id="passphrase" required minlength="12" autocomplete="current-password">
+          <input type="password" id="passphrase" required autocomplete="current-password">
         </label>
+        <p class="strength" id="strength" aria-live="polite"></p>
         <label id="confirm-row" hidden>Confirm passphrase
-          <input type="password" id="passphrase-confirm" minlength="12" autocomplete="new-password">
+          <input type="password" id="passphrase-confirm" autocomplete="new-password">
         </label>
         <button type="submit" id="lock-submit"></button>
         <p class="error" id="lock-error" role="alert"></p>
@@ -29,11 +30,37 @@
         <div class="actions">
           <button id="connect-btn">+ Connect account</button>
           <button id="refresh-btn" class="secondary">Refresh</button>
+          <button id="settings-btn" class="secondary">Settings</button>
           <button id="lock-btn" class="secondary">Lock</button>
         </div>
       </header>
       <p class="muted" id="env-banner"></p>
       <p class="error" id="dash-error" role="alert"></p>
+
+      <section id="settings" class="panel" hidden>
+        <h2>Plaid keys</h2>
+        <p class="muted" id="settings-intro"></p>
+        <p class="muted">Find these at dashboard.plaid.com → Developers → Keys. Each environment has its own secret.</p>
+        <form id="settings-form" autocomplete="off">
+          <label>Environment
+            <select id="plaid-env">
+              <option value="sandbox">Sandbox (fake test banks)</option>
+              <option value="production">Production (your real accounts)</option>
+            </select>
+          </label>
+          <label>Client ID
+            <input id="plaid-client-id" required spellcheck="false" autocomplete="off">
+          </label>
+          <label>Secret
+            <input id="plaid-secret" type="password" spellcheck="false" autocomplete="off">
+          </label>
+          <div class="actions">
+            <button type="submit">Save</button>
+            <button type="button" class="secondary" id="settings-cancel">Cancel</button>
+          </div>
+          <p class="error" id="settings-error" role="alert"></p>
+        </form>
+      </section>
 
       <div class="cards" id="totals"></div>
       <p class="muted" id="updated-at"></p>
