@@ -25,12 +25,10 @@ The browser never receives Plaid tokens or your Plaid secret, and `data/` is git
 
 1. **Install Node.js 20 or newer** (the **LTS** version) from <https://nodejs.org>.
 2. **Create a free Plaid account** at <https://dashboard.plaid.com/signup>. Under **Developers → Keys**, you'll find your `client_id` and your **Sandbox** secret.
-3. Open a terminal in this folder and run:
-   ```bash
-   npm start
-   ```
-   There's nothing to install: the app has no dependencies.
-4. Open <http://localhost:3000> and create a passphrase. Use 5–6 random words and save it in a password manager.
+3. Start the app. There's nothing to install: the app has no dependencies.
+   - **Windows:** double-click **`Start Finance Dashboard`** (`Start Finance Dashboard.bat`). Your browser opens automatically.
+   - **Mac or Linux:** open a terminal in this folder, run `npm start`, then open <http://localhost:3000>.
+4. Create a passphrase. Use 5–6 random words and save it in a password manager.
 5. The **Settings** panel opens. Paste your Plaid client ID and secret and click **Save**. They are stored encrypted in your vault.
 6. Click **+ Connect account**.
 
@@ -45,7 +43,8 @@ With **Sandbox** selected in Settings, pick any bank in the Plaid window and log
 Some banks (for example Chase and Capital One) require Plaid to be approved for OAuth before you can connect them. The Plaid dashboard walks you through this.
 
 ## Everyday use
-- Run `npm start` in this folder, open <http://localhost:3000>, then unlock. Press **Ctrl + C** in the terminal to stop the app.
+- **Windows:** double-click **`Start Finance Dashboard`** and unlock. Keep the black window open while you use the app, and close it to stop the app. Tip: right-click the file, choose **Show more options → Send to → Desktop (create shortcut)** to start it from your desktop.
+- **Mac or Linux:** run `npm start` in this folder, open <http://localhost:3000>, then unlock. Press **Ctrl + C** in the terminal to stop the app.
 - **Refresh** gets the latest balances.
 - If a bank shows **Reconnect**, its login expired (this is normal every few months). Click it and log in again.
 - **Forgot your passphrase?** Delete `data/vault.json`, then re-enter your Plaid keys and reconnect your accounts. No money or bank data is lost.
@@ -55,6 +54,7 @@ Optional settings, as environment variables: `PORT` (default 3000) and `IDLE_LOC
 ## Keep your computer secure too
 The app can't protect you from a compromised computer, so:
 - Turn on **disk encryption**: FileVault on Mac, BitLocker or Device Encryption on Windows.
+- Keep this folder **outside OneDrive, iCloud or Dropbox** (for example `C:\Apps`) so your vault stays only on your computer. The Windows start file warns you if it's inside OneDrive.
 - Keep your system and browser **updated**, and set a short screen-lock timeout.
 - Use a **separate browser profile with no extensions** for this app. Extensions can read pages you open.
 - Turn on **two-factor authentication** for your Plaid dashboard, email and GitHub.

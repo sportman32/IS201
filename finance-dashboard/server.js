@@ -3,6 +3,7 @@
 // Local-only finance dashboard server. Uses only Node's built-in modules:
 // no third-party code runs in this app.
 
+const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -348,8 +349,32 @@ if (require.main === module) {
     vaultPath: process.env.VAULT_PATH || path.join(__dirname, 'data', 'vault.json'),
     idleLockMs: Number(process.env.IDLE_LOCK_MINUTES || 15) * 60 * 1000,
   });
-  app.listen(port, HOST, () => {
-    console.log(`Finance dashboard running at http://localhost:${port}`);
-    console.log('Press Ctrl+C to stop.');
+  const url = `http://localhost:${port}`;
+  const openBrowser = process.argv.includes('--open');
+
+  app.on('error', (err) => {
+    if (err.code === 'EADDRINUSE' && openBrowser) {
+      // Double-clicked the start file again: the app is already running, so just show it.
+      console.log(`Finance dashboard is already running. Opening ${url}`);
+      openInBrowser(url);
+      return;
+    }
+    if (err.code === 'EADDRINUSE') console.error(`Port ${port} is already in use. Is the app already running?`);
+    else console.error(err.message);
+    process.exit(1);
   });
+
+  app.listen(port, HOST, () => {
+    console.log(`Finance dashboard running at ${url}`);
+    console.log('Press Ctrl+C to stop.');
+    if (openBrowser) openInBrowser(url);
+  });
+}
+
+// Opens the default browser. The URL is built from a number, never from user input.
+function openInBrowser(url) {
+  const command = { win32: 'explorer.exe', darwin: 'open' }[process.platform] || 'xdg-open';
+  spawn(command, [url], { detached: true, stdio: 'ignore' }).on('error', () => {
+    console.log(`Open ${url} in your browser.`);
+  }).unref();
 }
