@@ -1,6 +1,13 @@
 # My Finance Dashboard
 
-A personal app that runs **only on your own computer**. It shows the current balances of all your bank accounts and credit cards on one screen: cash, card balances, credit utilization and net worth.
+A personal app that runs **only on your own computer**. It brings all your money into one place:
+
+- **Overview:** net worth with a history chart, cash, investments, credit card use, cash flow by month, spending by category, recent transactions and upcoming card payments.
+- **Transactions:** instant search across every bank and card. Type a merchant, category, account or amount (`coffee`, `>100`, `<20`, `42.50`, `pending`), filter by date, account, category or direction, open any transaction for details, and export to CSV.
+- **Accounts:** every bank, card, loan and investment account with balances, card limits and connection status, plus anything you add yourself (home, car, a personal loan).
+- **Investments:** holdings across brokerages, IRAs and 401(k)s, combined by security, with gains, allocation and weights.
+- **Rewards:** your airline, hotel and card points with estimated value. You enter these yourself, since airlines and hotels don't offer a safe way to sync them.
+- Light and dark mode, keyboard shortcuts (`/` or `Ctrl+K` to search), and it works in a narrow window.
 
 Bank connections go through [Plaid](https://plaid.com), the same service used by Venmo, Robinhood and most budgeting apps.
 
@@ -30,13 +37,13 @@ The browser never receives Plaid tokens or your Plaid secret, and `data/` is git
    - **Mac or Linux:** open a terminal in this folder, run `npm start`, then open <http://localhost:3000>.
 4. Create a passphrase. Use 5–6 random words and save it in a password manager.
 5. The **Settings** panel opens. Paste your Plaid client ID and secret and click **Save**. They are stored encrypted in your vault.
-6. Click **+ Connect account**.
+6. Click **Add** and choose **Bank or credit card** or **Investment account**.
 
 ### Try it with fake data first (Sandbox)
 With **Sandbox** selected in Settings, pick any bank in the Plaid window and log in with username **`user_good`** and password **`pass_good`**. You'll see realistic fake checking, savings and credit card accounts.
 
 ### Switch to your real accounts (Production)
-1. In the Plaid dashboard, request **Production** access. New US accounts get a free Trial plan with up to 10 bank logins. Check Plaid's current pricing page.
+1. In the Plaid dashboard, request **Production** access. New US accounts get a free Trial plan with up to 10 connections (each bank, card issuer or brokerage login is one), including transactions, investments and card details. Check Plaid's current pricing page.
 2. In the app, open **Settings**, choose **Production**, paste your **Production** secret, and save. Your sandbox test connections are revoked and removed automatically.
 3. Connect your real banks and cards.
 
@@ -45,7 +52,8 @@ Some banks (for example Chase and Capital One) require Plaid to be approved for 
 ## Everyday use
 - **Windows:** double-click **`Start Finance Dashboard`** and unlock. Keep the black window open while you use the app, and close it to stop the app. Tip: right-click the file, choose **Show more options → Send to → Desktop (create shortcut)** to start it from your desktop.
 - **Mac or Linux:** run `npm start` in this folder, open <http://localhost:3000>, then unlock. Press **Ctrl + C** in the terminal to stop the app.
-- **Refresh** gets the latest balances.
+- The app syncs automatically when you unlock it (if the last sync was more than 30 minutes ago). Click **Updated … ago** in the top bar to sync now. Only new transactions are downloaded.
+- New bank connections pull up to 2 years of transaction history. It can take a few minutes for Plaid to have all of it ready, so click sync again later if older transactions are missing.
 - If a bank shows **Reconnect**, its login expired (this is normal every few months). Click it and log in again.
 - **Forgot your passphrase?** Delete `data/vault.json`, then re-enter your Plaid keys and reconnect your accounts. No money or bank data is lost.
 
@@ -70,12 +78,12 @@ npm test
 server.js        Local web server, routes, session and auto-lock
 lib/plaid.js     Minimal Plaid API client (built-in fetch, no SDK)
 lib/vault.js     Encrypted storage for Plaid keys and tokens
-lib/summary.js   Totals: cash, card balances, utilization, net worth
+lib/summary.js   Shapes Plaid data and computes totals and net worth
 public/          Dashboard UI (HTML, CSS, JS)
 test/            Tests, including the security rules
 ```
 
 ## Ideas for later
-- Loyalty points (airline and hotel) via manual entry or statement-email parsing
-- Balance history chart (save a daily snapshot inside the vault)
-- Recent transactions and spending by category
+- Budgets per category with alerts
+- Recurring subscriptions detection
+- Investment transaction history (buys, sells, dividends)

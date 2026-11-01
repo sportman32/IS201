@@ -150,6 +150,13 @@ class Vault {
     this.data.items = [];
     this.save();
   }
+
+  // Generic encrypted storage for app data (transactions, history, manual accounts...).
+  section(name, fallback) {
+    if (!this.isUnlocked()) throw new Error('Vault is locked.');
+    if (!(name in this.data)) this.data[name] = fallback;
+    return this.data[name];
+  }
 }
 
 module.exports = { Vault, WrongPassphraseError, checkPassphrase, MIN_PASSPHRASE_LEN };

@@ -10,7 +10,7 @@ const http = require('node:http');
 const path = require('node:path');
 const { Vault, WrongPassphraseError } = require('./lib/vault');
 const { createPlaidClient, PlaidError, PLAID_ENVS } = require('./lib/plaid');
-const { simplifyAccount, summarize } = require('./lib/summary');
+const { simplifyAccount, simplifyTransaction, simplifyHoldings, simplifyCredit, summarize } = require('./lib/summary');
 
 const HOST = '127.0.0.1'; // Never listen on the network: only this computer can reach the app.
 const MAX_BODY_BYTES = 10 * 1024;
@@ -178,9 +178,11 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
       if (!/^[A-Za-z0-9]{10,64}$/.test(secret)) throw new HttpError(400, 'Enter the secret for this environment.');
 
       // Connections only work in the environment they were made in, so revoke them when switching.
+      // Test data (transactions, history) from the old environment is cleared too.
       if (current && current.env !== env) {
         const oldPlaid = createPlaidClient(current);
         await Promise.all(vault.listItems().map((item) => revoke(oldPlaid, item)));
+        for (const name of ['cache', 'transactions', 'history', 'meta']) delete vault.data[name];
         vault.clearItems();
       }
       vault.setPlaidConfig({ env, clientId, secret });
@@ -191,71 +193,274 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
     // opens Link in "update mode" to re-authenticate a connection that has expired.
     'POST /api/link-token': async (req, res, body) => {
       requireSession(req);
-      const request = {
+      const plaid = plaidClient();
+      const base = {
         user: { client_user_id: 'local-user' },
         client_name: 'My Finance Dashboard',
         country_codes: ['US'],
         language: 'en',
       };
-      if (body.itemId) request.access_token = findItem(body.itemId).accessToken;
-      else request.products = ['transactions'];
-      const data = await plaidClient().linkTokenCreate(request);
-      return { linkToken: data.link_token };
+      if (body.itemId) {
+        const data = await plaid.linkTokenCreate({ ...base, access_token: findItem(body.itemId).accessToken });
+        return { linkToken: data.link_token };
+      }
+      const kind = body.kind === 'investments' ? 'investments' : 'bank';
+      const minimal = { ...base, products: kind === 'investments' ? ['investments'] : ['transactions'] };
+      // Banks: ask for 2 years of history and card due dates where the bank supports them.
+      const full = kind === 'bank'
+        ? { ...minimal, optional_products: ['liabilities'], transactions: { days_requested: 730 } }
+        : minimal;
+      try {
+        return { linkToken: (await plaid.linkTokenCreate(full)).link_token };
+      } catch (err) {
+        // If Plaid rejects the extras, connecting should still work without them.
+        if (full === minimal || err.type !== 'INVALID_REQUEST') throw err;
+        console.error(`Link token extras rejected (${err.code}); retrying without them.`);
+        return { linkToken: (await plaid.linkTokenCreate(minimal)).link_token };
+      }
     },
 
     'POST /api/exchange': async (req, res, body) => {
       requireSession(req);
       if (typeof body.publicToken !== 'string') throw new HttpError(400, 'Missing publicToken.');
-      const data = await plaidClient().itemPublicTokenExchange({ public_token: body.publicToken });
+      const plaid = plaidClient();
+      const data = await plaid.itemPublicTokenExchange({ public_token: body.publicToken });
       const institution = body.institution || {};
-      vault.addItem({
+      const item = {
         itemId: data.item_id,
         accessToken: data.access_token,
+        kind: body.kind === 'investments' ? 'investments' : 'bank',
         institutionName: String(institution.name || 'Unknown institution').slice(0, 100),
         institutionId: institution.institution_id ? String(institution.institution_id).slice(0, 50) : null,
+        logo: null,
+        color: null,
+        cursor: null,
         addedAt: new Date().toISOString(),
-      });
-      return { ok: true };
+      };
+      Object.assign(item, await institutionBranding(plaid, item.institutionId));
+      vault.addItem(item);
+      await refreshItem(plaid, item);
+      recordHistory();
+      vault.save();
+      return buildState();
     },
 
-    // Fetches balances for every connection. Access tokens never leave the server.
-    'GET /api/accounts': async (req) => {
+    // Everything the dashboard shows, from the encrypted cache (no Plaid calls, so it's instant).
+    'GET /api/data': async (req) => {
+      requireSession(req);
+      return buildState();
+    },
+
+    // Fetches fresh balances, holdings, card details and new transactions from Plaid.
+    'POST /api/refresh': async (req) => {
       requireSession(req);
       const items = vault.listItems();
-      const plaid = items.length ? plaidClient() : null;
-      const results = await Promise.all(items.map(async (item) => {
-        try {
-          const data = await plaid.accountsGet({ access_token: item.accessToken });
-          return { item, accounts: data.accounts.map((a) => simplifyAccount(a, item.institutionName)) };
-        } catch (err) {
-          const code = err.code || 'UNKNOWN_ERROR';
-          console.error(`Plaid error for ${item.institutionName}: ${code}`);
-          return { item, accounts: [], error: code };
-        }
-      }));
-
-      return {
-        updatedAt: new Date().toISOString(),
-        totals: summarize(results.flatMap((r) => r.accounts)),
-        connections: results.map(({ item, accounts, error }) => ({
-          itemId: item.itemId,
-          institutionName: item.institutionName,
-          addedAt: item.addedAt,
-          error: error || null,
-          needsReconnect: error === 'ITEM_LOGIN_REQUIRED' || error === 'PENDING_EXPIRATION',
-          accounts,
-        })),
-      };
+      if (items.length) {
+        const plaid = plaidClient();
+        await Promise.all(items.map((item) => refreshItem(plaid, item)));
+      }
+      vault.section('meta', {}).lastRefresh = new Date().toISOString();
+      recordHistory();
+      vault.save();
+      return buildState();
     },
 
     'POST /api/items/remove': async (req, res, body) => {
       requireSession(req);
       const item = findItem(body.itemId);
       await revoke(plaidClient(), item);
+      forgetItemData(item.itemId);
       vault.removeItem(item.itemId);
+      return buildState();
+    },
+
+    // Manual entries: points programs (miles, hotel points) and other assets or debts.
+    'PUT /api/manual': async (req, res, body) => {
+      requireSession(req);
+      const manual = vault.section('manual', []);
+      const entry = validateManual(body);
+      const existing = manual.findIndex((m) => m.id === body.id);
+      if (body.id && existing < 0) throw new HttpError(404, 'Unknown entry.');
+      if (existing >= 0) manual[existing] = { ...manual[existing], ...entry };
+      else manual.push({ id: crypto.randomUUID(), ...entry });
+      recordHistory();
+      vault.save();
+      return buildState();
+    },
+
+    'POST /api/manual/remove': async (req, res, body) => {
+      requireSession(req);
+      const manual = vault.section('manual', []);
+      const index = manual.findIndex((m) => m.id === body.id);
+      if (index < 0) throw new HttpError(404, 'Unknown entry.');
+      manual.splice(index, 1);
+      recordHistory();
+      vault.save();
+      return buildState();
+    },
+
+    // Keeps the session alive while you're actively using the page.
+    'POST /api/ping': async (req) => {
+      requireSession(req);
       return { ok: true };
     },
   };
+
+  // --- Data ------------------------------------------------------------------
+
+  async function institutionBranding(plaid, institutionId) {
+    if (!institutionId) return {};
+    try {
+      const { institution } = await plaid.institutionsGetById({
+        institution_id: institutionId,
+        country_codes: ['US'],
+        options: { include_optional_metadata: true },
+      });
+      const logo = typeof institution.logo === 'string' && institution.logo.length < 100000 ? institution.logo : null;
+      const color = /^#[0-9a-f]{6}$/i.test(institution.primary_color || '') ? institution.primary_color : null;
+      return { logo, color };
+    } catch {
+      return {};
+    }
+  }
+
+  // Refreshes one connection. On failure the last known data is kept and the error shown.
+  async function refreshItem(plaid, item) {
+    const cache = vault.section('cache', {});
+    const entry = (cache[item.itemId] ??= { accounts: [], holdings: [], credit: {} });
+    const access = { access_token: item.accessToken };
+    try {
+      if (item.kind === 'investments') {
+        const data = await plaid.investmentsHoldingsGet(access);
+        entry.accounts = data.accounts.map((a) => simplifyAccount(a, item.institutionName));
+        entry.holdings = simplifyHoldings(data);
+      } else {
+        const data = await plaid.accountsGet(access);
+        entry.accounts = data.accounts.map((a) => simplifyAccount(a, item.institutionName));
+        entry.credit = await plaid.liabilitiesGet(access).then(simplifyCredit, () => entry.credit || {});
+        await syncTransactions(plaid, item);
+      }
+      entry.error = null;
+      entry.fetchedAt = new Date().toISOString();
+    } catch (err) {
+      entry.error = err.code || 'UNKNOWN_ERROR';
+      console.error(`Plaid error for ${item.institutionName}: ${entry.error}`);
+    }
+  }
+
+  // Pulls only new and changed transactions since the last sync (Plaid's cursor).
+  async function syncTransactions(plaid, item) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let cursor = item.cursor;
+      const added = [];
+      const modified = [];
+      const removed = [];
+      try {
+        let more = true;
+        while (more) {
+          const data = await plaid.transactionsSync({ access_token: item.accessToken, count: 500, ...(cursor ? { cursor } : {}) });
+          added.push(...data.added);
+          modified.push(...data.modified);
+          removed.push(...data.removed);
+          cursor = data.next_cursor;
+          more = data.has_more;
+        }
+      } catch (err) {
+        // Data changed mid-way: start this sync over from the saved cursor.
+        if (err.code === 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION') continue;
+        throw err;
+      }
+      const txns = vault.section('transactions', {});
+      for (const t of [...added, ...modified]) txns[t.transaction_id] = simplifyTransaction(t, item.itemId);
+      for (const t of removed) delete txns[t.transaction_id];
+      item.cursor = cursor || null;
+      return;
+    }
+    throw new PlaidError('TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION');
+  }
+
+  function forgetItemData(itemId) {
+    delete vault.section('cache', {})[itemId];
+    const txns = vault.section('transactions', {});
+    for (const [id, t] of Object.entries(txns)) if (t.itemId === itemId) delete txns[id];
+  }
+
+  // One snapshot per day of the headline totals, for the net worth chart.
+  function recordHistory() {
+    const t = currentTotals();
+    const history = vault.section('history', []);
+    const date = localDate();
+    const point = {
+      date,
+      netWorth: t.netWorth, cash: t.cash, investments: t.investments,
+      credit: t.creditCardDebt, loans: t.loans, otherAssets: t.manualAssets + t.other, otherDebts: t.manualDebts,
+    };
+    if (history.at(-1)?.date === date) history[history.length - 1] = point;
+    else history.push(point);
+    if (history.length > 1500) history.splice(0, history.length - 1500);
+  }
+
+  function allAccounts() {
+    const cache = vault.section('cache', {});
+    return vault.listItems().flatMap((item) => (cache[item.itemId]?.accounts || []).map((a) => ({
+      ...a,
+      itemId: item.itemId,
+      credit: cache[item.itemId]?.credit?.[a.id] || null,
+    })));
+  }
+
+  function currentTotals() {
+    const totals = summarize(allAccounts(), vault.section('manual', []));
+    return totals.USD || { cash: 0, investments: 0, other: 0, creditCardDebt: 0, loans: 0, manualAssets: 0, manualDebts: 0, netWorth: 0 };
+  }
+
+  function buildState() {
+    const cache = vault.section('cache', {});
+    const accounts = allAccounts();
+    const manual = vault.section('manual', []);
+    return {
+      lastRefresh: vault.section('meta', {}).lastRefresh || null,
+      plaidEnv: vault.getPlaidConfig()?.env || null,
+      connections: vault.listItems().map((item) => {
+        const entry = cache[item.itemId] || {};
+        return {
+          itemId: item.itemId,
+          kind: item.kind || 'bank',
+          institutionName: item.institutionName,
+          logo: item.logo || null,
+          color: item.color || null,
+          addedAt: item.addedAt,
+          fetchedAt: entry.fetchedAt || null,
+          error: entry.error || null,
+          needsReconnect: entry.error === 'ITEM_LOGIN_REQUIRED' || entry.error === 'PENDING_EXPIRATION',
+        };
+      }),
+      accounts,
+      holdings: vault.listItems().flatMap((item) => cache[item.itemId]?.holdings || []),
+      totals: summarize(accounts, manual),
+      manual,
+      history: vault.section('history', []),
+      transactions: Object.values(vault.section('transactions', {}))
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+    };
+  }
+
+  function validateManual(body) {
+    const kinds = ['points', 'asset', 'liability'];
+    if (!kinds.includes(body.kind)) throw new HttpError(400, 'Choose points, asset or debt.');
+    const name = String(body.name ?? '').trim().slice(0, 60);
+    if (!name) throw new HttpError(400, 'Give it a name.');
+    const balance = Number(body.balance);
+    if (!Number.isFinite(balance) || Math.abs(balance) > 1e12) throw new HttpError(400, 'Enter a valid balance.');
+    const entry = { kind: body.kind, name, balance, updatedAt: new Date().toISOString() };
+    if (body.kind === 'points') {
+      const cpp = body.centsPerPoint === '' || body.centsPerPoint == null ? null : Number(body.centsPerPoint);
+      if (cpp !== null && (!Number.isFinite(cpp) || cpp < 0 || cpp > 100)) throw new HttpError(400, 'Value per point must be 0–100 cents.');
+      entry.centsPerPoint = cpp;
+      entry.unit = String(body.unit ?? 'points').trim().slice(0, 20) || 'points';
+    }
+    return entry;
+  }
 
   // --- Request handling ------------------------------------------------------
 
@@ -377,4 +582,8 @@ function openInBrowser(url) {
   spawn(command, [url], { detached: true, stdio: 'ignore' }).on('error', () => {
     console.log(`Open ${url} in your browser.`);
   }).unref();
+}
+
+function localDate(d = new Date()) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
