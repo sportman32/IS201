@@ -1133,8 +1133,11 @@ function viewSettings() {
   const envSelect = el('select', {},
     el('option', { value: 'sandbox' }, 'Sandbox (fake test banks)'),
     el('option', { value: 'production' }, 'Production (your real accounts)'));
-  const clientId = el('input', { required: true, spellcheck: 'false', autocomplete: 'off' });
-  const secret = el('input', { type: 'password', spellcheck: 'false', autocomplete: 'off' });
+  // Password managers treat a text box followed by a password box as a login form and
+  // fill in a saved password. These attributes tell Chrome, Edge, 1Password and LastPass not to.
+  const noFill = { spellcheck: 'false', autocomplete: 'off', 'data-1p-ignore': true, 'data-lpignore': 'true', 'data-form-type': 'other' };
+  const clientId = el('input', { ...noFill, required: true, name: 'plaid-client-id', placeholder: '24 letters and numbers' });
+  const secret = el('input', { ...noFill, type: 'password', autocomplete: 'new-password', name: 'plaid-secret' });
   const error = el('p', { class: 'form-error', role: 'alert' });
   let savedEnv = null;
   api('GET', '/api/settings').then((s) => {

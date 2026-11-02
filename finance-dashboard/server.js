@@ -212,8 +212,10 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
       // A blank secret means "keep the saved one" unless the environment changes.
       const secret = String(body.secret ?? '').trim() || (current?.env === env ? current.secret : '');
       if (!PLAID_ENVS.includes(env)) throw new HttpError(400, 'Choose sandbox or production.');
-      if (!/^[A-Za-z0-9]{10,64}$/.test(clientId)) throw new HttpError(400, 'That client ID doesn\'t look right.');
-      if (!/^[A-Za-z0-9]{10,64}$/.test(secret)) throw new HttpError(400, 'Enter the secret for this environment.');
+      if (!/^[A-Za-z0-9]{10,64}$/.test(clientId)) {
+        throw new HttpError(400, 'That isn\'t a Plaid client ID. Copy it from dashboard.plaid.com → Developers → Keys (letters and numbers only). If your browser filled this box in automatically, clear it and paste the ID.');
+      }
+      if (!/^[A-Za-z0-9]{10,64}$/.test(secret)) throw new HttpError(400, 'Paste the secret for this environment from dashboard.plaid.com → Developers → Keys (letters and numbers only).');
 
       // Connections only work in the environment they were made in, so revoke them when switching.
       // Test data (transactions, history) from the old environment is cleared too.
