@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Connect an account · My Finances</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Runs on its own site (127.0.0.1) so Plaid's script never shares a page with your data. -->
+  <section class="lock">
+    <div class="lock-card">
+      <div class="brand-mark" aria-hidden="true"></div>
+      <h1>Connecting securely</h1>
+      <p class="lock-intro" id="status" role="status">Opening Plaid…</p>
+      <p class="lock-foot">You sign in to your bank inside Plaid's window. This app never sees your bank password.</p>
+    </div>
+  </section>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="link.js"></script>
+</body>
+</html>

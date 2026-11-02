@@ -3,73 +3,72 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>My Finances</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
-    <section id="lock-screen" hidden>
+  <!-- Lock screen -->
+  <section id="lock-screen" class="lock" hidden>
+    <div class="lock-card">
+      <div class="brand-mark" aria-hidden="true"></div>
       <h1>My Finances</h1>
-      <p id="lock-intro"></p>
+      <p class="lock-intro" id="lock-intro"></p>
       <form id="lock-form" autocomplete="off">
-        <label>Passphrase
+        <label class="field">
+          <span>Passphrase</span>
           <input type="password" id="passphrase" required autocomplete="current-password">
         </label>
-        <p class="strength" id="strength" aria-live="polite"></p>
-        <label id="confirm-row" hidden>Confirm passphrase
+        <div class="strength" id="strength" aria-live="polite"><div class="strength-bar"><i id="strength-fill"></i></div><span id="strength-label"></span></div>
+        <label class="field" id="confirm-row" hidden>
+          <span>Confirm passphrase</span>
           <input type="password" id="passphrase-confirm" autocomplete="new-password">
         </label>
-        <button type="submit" id="lock-submit"></button>
-        <p class="error" id="lock-error" role="alert"></p>
+        <button type="submit" class="btn primary block" id="lock-submit"></button>
+        <p class="form-error" id="lock-error" role="alert"></p>
       </form>
-    </section>
+      <p class="lock-foot">Encrypted on this computer · Nothing leaves it except calls to Plaid</p>
+    </div>
+  </section>
 
-    <section id="dashboard" hidden>
+  <!-- App -->
+  <div id="app" class="app" hidden>
+    <nav class="sidebar" aria-label="Main">
+      <div class="brand"><div class="brand-mark" aria-hidden="true"></div><span>My Finances</span></div>
+      <div class="nav" id="nav"></div>
+      <div class="sidebar-foot">
+        <span class="env-badge" id="env-badge" hidden></span>
+        <button class="nav-item" id="lock-btn" type="button"></button>
+      </div>
+    </nav>
+
+    <div class="main">
       <header class="topbar">
-        <h1>My Finances</h1>
-        <div class="actions">
-          <button id="connect-btn">+ Connect account</button>
-          <button id="refresh-btn" class="secondary">Refresh</button>
-          <button id="settings-btn" class="secondary">Settings</button>
-          <button id="lock-btn" class="secondary">Lock</button>
+        <h1 class="page-title" id="page-title"></h1>
+        <label class="search" id="global-search-wrap">
+          <span class="search-icon" id="global-search-icon"></span>
+          <input id="global-search" type="search" placeholder="Search transactions" autocomplete="off" spellcheck="false">
+          <kbd>/</kbd>
+        </label>
+        <div class="topbar-actions">
+          <button class="btn ghost" id="refresh-btn" type="button" title="Refresh from your banks"></button>
+          <button class="btn ghost" id="lock-top" type="button" title="Lock" aria-label="Lock"></button>
+          <button class="btn primary" id="add-btn" type="button"></button>
         </div>
       </header>
-      <p class="muted" id="env-banner"></p>
-      <p class="error" id="dash-error" role="alert"></p>
+      <div class="banner" id="banner" hidden></div>
+      <main id="view" class="view" tabindex="-1"></main>
+    </div>
+  </div>
 
-      <section id="settings" class="panel" hidden>
-        <h2>Plaid keys</h2>
-        <p class="muted" id="settings-intro"></p>
-        <p class="muted">Find these at dashboard.plaid.com → Developers → Keys. Each environment has its own secret.</p>
-        <form id="settings-form" autocomplete="off">
-          <label>Environment
-            <select id="plaid-env">
-              <option value="sandbox">Sandbox (fake test banks)</option>
-              <option value="production">Production (your real accounts)</option>
-            </select>
-          </label>
-          <label>Client ID
-            <input id="plaid-client-id" required spellcheck="false" autocomplete="off">
-          </label>
-          <label>Secret
-            <input id="plaid-secret" type="password" spellcheck="false" autocomplete="off">
-          </label>
-          <div class="actions">
-            <button type="submit">Save</button>
-            <button type="button" class="secondary" id="settings-cancel">Cancel</button>
-          </div>
-          <p class="error" id="settings-error" role="alert"></p>
-        </form>
-      </section>
+  <!-- Overlays -->
+  <div class="scrim" id="scrim" hidden></div>
+  <aside class="drawer" id="drawer" hidden aria-modal="true" role="dialog"></aside>
+  <dialog class="dialog" id="dialog"></dialog>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
-      <div class="cards" id="totals"></div>
-      <p class="muted" id="updated-at"></p>
-
-      <div id="connections"></div>
-      <p class="muted" id="empty-state" hidden>No accounts connected yet. Click <b>+ Connect account</b> to add your first bank or credit card.</p>
-    </section>
-  </main>
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <!-- No outside scripts: Plaid runs in its own window on a separate site (see link.html). -->
   <script src="app.js"></script>
 </body>
 </html>

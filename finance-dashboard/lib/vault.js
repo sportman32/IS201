@@ -31,10 +31,21 @@ function checkPassphrase(passphrase) {
 }
 
 function deriveKey(passphrase, salt, params = SCRYPT) {
+  const { N, r, p } = params;
   return new Promise((resolve, reject) => {
-    crypto.scrypt(passphrase, salt, KEY_LEN, params, (err, key) =>
+    crypto.scrypt(passphrase, salt, KEY_LEN, { N, r, p, maxmem: 128 * N * r + 32 * 1024 * 1024 }, (err, key) =>
       err ? reject(err) : resolve(key));
   });
+}
+
+// The cost settings stored in a vault file. Bounds stop a tampered file from
+// asking for absurd amounts of memory or time.
+function readScryptParams(params) {
+  const { N, r, p } = params || {};
+  const ok = Number.isInteger(N) && N >= 2 && N <= 2 ** 20 && (N & (N - 1)) === 0
+    && Number.isInteger(r) && r >= 1 && r <= 32 && Number.isInteger(p) && p >= 1 && p <= 16;
+  if (!ok) throw new Error('Vault file has invalid encryption settings.');
+  return { N, r, p };
 }
 
 function encrypt(key, data) {
@@ -83,14 +94,28 @@ class Vault {
     this.save();
   }
 
+  // Only changes state once the passphrase is proven correct, so a wrong guess
+  // never disturbs an unlocked vault.
   async unlock(passphrase) {
     const file = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
     if (file.version !== FORMAT_VERSION) throw new Error('Unsupported vault version.');
+    const fileParams = readScryptParams(file.scrypt);
     const salt = Buffer.from(file.salt, 'base64');
-    const key = await deriveKey(String(passphrase), salt, file.scrypt);
-    this.data = decrypt(key, file);
-    this.salt = salt;
-    this.key = key;
+    const key = await deriveKey(String(passphrase), salt, fileParams);
+    const data = decrypt(key, file);
+    this.lock();
+    this.data = data;
+    if (fileParams.N < this.scryptParams.N || fileParams.r < this.scryptParams.r) {
+      // Older or weaker settings: re-encrypt with the current, stronger ones.
+      key.fill(0);
+      this.salt = crypto.randomBytes(16);
+      this.key = await deriveKey(String(passphrase), this.salt, this.scryptParams);
+      this.save();
+    } else {
+      this.scryptParams = { ...this.scryptParams, ...fileParams };
+      this.salt = salt;
+      this.key = key;
+    }
   }
 
   lock() {
@@ -105,7 +130,7 @@ class Vault {
     const file = {
       version: FORMAT_VERSION,
       salt: this.salt.toString('base64'),
-      scrypt: { N: this.scryptParams.N, r: this.scryptParams.r, p: this.scryptParams.p, maxmem: this.scryptParams.maxmem },
+      scrypt: { N: this.scryptParams.N, r: this.scryptParams.r, p: this.scryptParams.p },
       ...encrypt(this.key, this.data),
     };
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
@@ -149,6 +174,13 @@ class Vault {
     this.listItems();
     this.data.items = [];
     this.save();
+  }
+
+  // Generic encrypted storage for app data (transactions, history, manual accounts...).
+  section(name, fallback) {
+    if (!this.isUnlocked()) throw new Error('Vault is locked.');
+    if (!(name in this.data)) this.data[name] = fallback;
+    return this.data[name];
   }
 }
 
