@@ -1180,7 +1180,7 @@ function viewSettings() {
         'Everything it stores is encrypted on this computer with AES-256 and your passphrase.',
         'Only this computer can open the app. It\'s invisible to your network and the internet.',
         'Locks when you close the tab, after 1 minute in the background, or after 15 minutes idle.',
-        'No third-party code besides Plaid\'s login window.',
+        'No outside code runs in the app. Plaid\'s login runs in its own isolated window.',
       ].map((text) => el('li', {}, icon('check'), text))),
       el('div', { style: { marginTop: '16px' } }, el('button', { class: 'btn', onclick: lockNow }, icon('lock'), 'Lock now'))));
   return root;
@@ -1284,41 +1284,62 @@ function openManualDialog(kind, existing = null) {
 
 // ============================================================ Plaid Link
 
-// Opens Plaid Link. You type your bank login into Plaid's window, never this app's.
+// Opens Plaid in its own window on a separate site (127.0.0.1), so Plaid's script
+// never runs alongside your data. You type your bank login there, never here.
 async function openLink({ kind = 'bank', itemId = null } = {}) {
-  if (typeof Plaid === 'undefined') {
-    toast('Could not load the Plaid login window. Check your internet connection or ad blocker.', 'error');
+  // Open the window right away, while the click still counts, so pop-up blockers allow it.
+  const win = window.open('about:blank', 'plaid-link', 'popup=yes,width=480,height=760');
+  if (!win) {
+    toast('Allow pop-ups for this page to connect accounts.', 'error');
     return;
   }
+  linkOpen = true;
+  const linkOrigin = `http://127.0.0.1:${location.port}`;
+  let poll = null;
+  const cleanup = () => {
+    window.removeEventListener('message', onMessage);
+    clearInterval(poll);
+    linkOpen = false;
+  };
+
+  // Only messages from that exact window, on that exact site, are accepted.
+  async function onMessage(e) {
+    if (e.origin !== linkOrigin || e.source !== win || e.data?.source !== 'plaid-link') return;
+    cleanup();
+    const { type, publicToken, institution, error } = e.data;
+    if (type === 'exit') {
+      if (error) toast(String(error).slice(0, 200), 'error');
+      return;
+    }
+    if (type !== 'success' || typeof publicToken !== 'string') return;
+    const name = typeof institution?.name === 'string' ? institution.name.slice(0, 100) : 'Account';
+    try {
+      if (itemId) {
+        toast('Reconnected. Syncing…');
+        await refresh();
+      } else {
+        toast(`Connecting ${name}… This can take a moment.`);
+        data = await api('POST', '/api/exchange', {
+          publicToken,
+          kind,
+          institution: { name, institution_id: typeof institution?.institution_id === 'string' ? institution.institution_id : null },
+        });
+        toast(`${name} connected.`);
+        render();
+      }
+    } catch (err) {
+      if (err.message !== 'Locked') toast(err.message, 'error');
+    }
+  }
+
+  window.addEventListener('message', onMessage);
+  poll = setInterval(() => { if (win.closed) cleanup(); }, 500);
   try {
     const { linkToken } = await api('POST', '/api/link-token', itemId ? { itemId } : { kind });
-    const handler = Plaid.create({
-      token: linkToken,
-      onSuccess: async (publicToken, metadata) => {
-        linkOpen = false;
-        const name = metadata.institution?.name || 'Account';
-        try {
-          if (itemId) {
-            toast('Reconnected. Syncing…');
-            await refresh();
-          } else {
-            toast(`Connecting ${name}… This can take a moment.`);
-            data = await api('POST', '/api/exchange', { publicToken, institution: metadata.institution, kind });
-            toast(`${name} connected.`);
-            render();
-          }
-        } catch (err) {
-          if (err.message !== 'Locked') toast(err.message, 'error');
-        }
-      },
-      onExit: (err) => {
-        linkOpen = false;
-        if (err) toast(err.display_message || err.error_message || 'Connection cancelled.', 'error');
-      },
-    });
-    linkOpen = true;
-    handler.open();
+    win.location.replace(`${linkOrigin}/link#token=${encodeURIComponent(linkToken)}`);
   } catch (err) {
+    win.close();
+    cleanup();
     if (err.message !== 'Locked') toast(err.message, 'error');
   }
 }

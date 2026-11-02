@@ -19,14 +19,16 @@ Bank connections go through [Plaid](https://plaid.com), the same service used by
 |---|---|
 | Someone gets your bank password | This app never sees it. You type it into Plaid's secure window, and the app only receives a **read-only token** that can't move money. |
 | Someone copies files off your computer | Your Plaid keys and bank tokens are stored only in `data/vault.json`, encrypted with **AES-256-GCM** using a key derived from your passphrase (**scrypt**). Without the passphrase the file is useless. The passphrase is never saved, and no secrets sit in plain files. |
-| Malicious code sneaks in through a package ("supply-chain attack") | The app uses **no npm packages**, only Node's built-in modules. The only outside code is Plaid's official Link script, loaded from Plaid's CDN. Your bank login form runs inside Plaid's own isolated frame. |
+| Malicious code sneaks in through a package ("supply-chain attack") | The app uses **no npm packages**, only Node's built-in modules, and the app page loads no outside code at all. Plaid's script runs in a **separate window on a separate site** (`127.0.0.1`) that can't see your data or session. |
 | Someone on your Wi-Fi or the internet | The server only listens on `127.0.0.1`, so other devices can't connect to it at all. |
 | You walk away from the computer | The app locks **immediately when you close or reload the tab**, **after 1 minute** with the tab in the background, and **after 15 minutes** idle. Locking wipes the key from memory. There's also a **Lock** button. |
 | Someone guesses your passphrase | Passphrases must be **16+ characters** and not repetitive, with a strength meter. Each wrong guess makes the next attempt wait longer (up to 30 seconds), and scrypt makes every guess slow. |
-| A malicious website tries to talk to the app | Requests from other origins are blocked (CSRF and DNS-rebinding protection), with a strict Content-Security-Policy and no framing. |
+| A malicious website tries to talk to the app | Requests from any other site, including other apps on `localhost`, are rejected. There's CSRF and DNS-rebinding protection, a strict Content-Security-Policy and no framing. |
+| Malicious text in bank data | Always shown as plain text, so it can never run as code. CSV exports defuse spreadsheet formulas. |
+| Another program or account on your computer | Can't do anything without your session. Wrong guesses can't log you out. Keep the folder in your user folder so other accounts can't change the app's files. |
 | Removing an account | **Remove** tells Plaid to permanently revoke that token. |
 
-The browser never receives Plaid tokens or your Plaid secret, and `data/` is git-ignored.
+The browser never receives Plaid tokens or your Plaid secret, and `data/` is git-ignored. See **[SECURITY.md](SECURITY.md)** for the full security review, including what no app can protect against.
 
 ## Setup (about 10 minutes)
 
@@ -62,9 +64,11 @@ Optional settings, as environment variables: `PORT` (default 3000) and `IDLE_LOC
 ## Keep your computer secure too
 The app can't protect you from a compromised computer, so:
 - Turn on **disk encryption**: FileVault on Mac, BitLocker or Device Encryption on Windows.
-- Keep this folder **outside OneDrive, iCloud or Dropbox** (for example `C:\Apps`) so your vault stays only on your computer. The Windows start file warns you if it's inside OneDrive.
+- Keep this folder **in your user folder but outside OneDrive, iCloud or Dropbox**, for example `C:\Users\<you>\Apps`. Other Windows accounts can't change files there, and the vault never leaves your computer. The Windows start file warns you if the folder is somewhere else.
 - Keep your system and browser **updated**, and set a short screen-lock timeout.
 - Use a **separate browser profile with no extensions** for this app. Extensions can read pages you open.
+- Allow pop-ups for `localhost` so Plaid's window can open when you connect an account.
+- Delete CSV exports when you're done with them, since they're not encrypted.
 - Turn on **two-factor authentication** for your Plaid dashboard, email and GitHub.
 - Turn on **balance and transaction alerts** at your banks.
 
@@ -79,7 +83,7 @@ server.js        Local web server, routes, session and auto-lock
 lib/plaid.js     Minimal Plaid API client (built-in fetch, no SDK)
 lib/vault.js     Encrypted storage for Plaid keys and tokens
 lib/summary.js   Shapes Plaid data and computes totals and net worth
-public/          Dashboard UI (HTML, CSS, JS)
+public/          Dashboard UI; link.html/link.js is the isolated Plaid window
 test/            Tests, including the security rules
 ```
 

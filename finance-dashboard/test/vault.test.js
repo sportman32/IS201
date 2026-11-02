@@ -8,7 +8,7 @@ const path = require('node:path');
 const { Vault, WrongPassphraseError } = require('../lib/vault');
 
 // Cheap scrypt settings so tests run fast; the app uses much stronger ones.
-const fast = { scryptParams: { N: 2 ** 10, r: 8, p: 1, maxmem: 32 * 1024 * 1024 } };
+const fast = { scryptParams: { N: 2 ** 10, r: 8, p: 1 } };
 const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'vault-')), 'vault.json');
 const item = { itemId: 'item-1', accessToken: 'access-sandbox-secret-123', institutionName: 'Test Bank' };
 
@@ -81,4 +81,55 @@ test('updates and removes items', async () => {
   v.addItem(item);
   v.clearItems();
   assert.deepStrictEqual(v.listItems(), []);
+});
+
+test('a wrong passphrase leaves an unlocked vault untouched', async () => {
+  const file = tmpFile();
+  const v = new Vault(file, fast);
+  await v.create('correct horse battery');
+  v.addItem(item);
+  await assert.rejects(v.unlock('wrong passphrase!!'), WrongPassphraseError);
+  assert.ok(v.isUnlocked());
+  assert.deepStrictEqual(v.listItems(), [item]);
+});
+
+test('older, weaker encryption settings are upgraded on unlock', async () => {
+  const file = tmpFile();
+  const weak = new Vault(file, fast);
+  await weak.create('correct horse battery');
+  weak.addItem(item);
+  weak.lock();
+  const stronger = { scryptParams: { N: 2 ** 12, r: 8, p: 1 } };
+  const v = new Vault(file, stronger);
+  await v.unlock('correct horse battery');
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).scrypt.N, 2 ** 12);
+  v.addItem({ ...item, itemId: 'item-2' });
+  v.lock();
+  // Still opens after the upgrade and later saves.
+  const again = new Vault(file, stronger);
+  await again.unlock('correct horse battery');
+  assert.strictEqual(again.listItems().length, 2);
+});
+
+test('a vault made with different settings keeps opening after saves', async () => {
+  const file = tmpFile();
+  const a = new Vault(file, { scryptParams: { N: 2 ** 11, r: 8, p: 1 } });
+  await a.create('correct horse battery');
+  a.lock();
+  const b = new Vault(file, fast); // weaker target than the file: keep the file's settings
+  await b.unlock('correct horse battery');
+  b.addItem(item);
+  b.lock();
+  await new Vault(file, fast).unlock('correct horse battery');
+});
+
+test('a tampered file asking for absurd encryption settings is refused', async () => {
+  const file = tmpFile();
+  const v = new Vault(file, fast);
+  await v.create('correct horse battery');
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const scrypt of [{ N: 2 ** 30, r: 8, p: 1 }, { N: 1000, r: 8, p: 1 }, { N: 1024, r: 1e6, p: 1 }, null]) {
+    fs.writeFileSync(file, JSON.stringify({ ...data, scrypt }));
+    await assert.rejects(new Vault(file, fast).unlock('correct horse battery'), /invalid encryption settings/);
+  }
 });

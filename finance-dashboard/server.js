@@ -15,32 +15,69 @@ const { simplifyAccount, simplifyTransaction, simplifyHoldings, simplifyCredit, 
 const HOST = '127.0.0.1'; // Never listen on the network: only this computer can reach the app.
 const MAX_BODY_BYTES = 10 * 1024;
 
+// The app runs at http://localhost:PORT. Plaid's login window runs at
+// http://127.0.0.1:PORT, which browsers treat as a separate site: it never
+// receives the session cookie and can't read the app's data, so Plaid's
+// third-party script is walled off from your finances.
+//
 // The only files the server will ever send; no path from the URL touches the filesystem.
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const STATIC_FILES = {
+const APP_FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
 };
+const LINK_FILES = {
+  '/link': ['link.html', 'text/html; charset=utf-8'],
+  '/link.js': ['link.js', 'text/javascript; charset=utf-8'],
+  '/style.css': ['style.css', 'text/css; charset=utf-8'],
+};
 
-const SECURITY_HEADERS = {
+const COMMON_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), hid=(), clipboard-read=()',
+  'Cache-Control': 'no-store',
+};
+
+// The app itself loads no outside code at all.
+const APP_HEADERS = {
+  ...COMMON_HEADERS,
   'Content-Security-Policy': [
-    "default-src 'self'",
-    "script-src 'self' https://cdn.plaid.com",
-    'frame-src https://cdn.plaid.com',
-    "connect-src 'self' https://*.plaid.com",
-    "img-src 'self' data:",
+    "default-src 'none'",
+    "script-src 'self'",
     "style-src 'self'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
     "form-action 'none'",
   ].join('; '),
-  'X-Content-Type-Options': 'nosniff',
-  'X-Frame-Options': 'DENY',
-  'Referrer-Policy': 'no-referrer',
+  // Lets the Plaid window message back to the app.
   'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
-  'Cache-Control': 'no-store',
 };
+
+// The Plaid login window may load Plaid's script and frames, and nothing else.
+const LINK_HEADERS = {
+  ...COMMON_HEADERS,
+  'Content-Security-Policy': [
+    "default-src 'none'",
+    "script-src 'self' https://cdn.plaid.com",
+    'frame-src https://cdn.plaid.com',
+    'connect-src https://*.plaid.com',
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https://*.plaid.com",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; '),
+  // Keeps the link back to the app window so the result can be handed over.
+  'Cross-Origin-Opener-Policy': 'unsafe-none',
+};
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -139,7 +176,7 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
         // Slow down repeated guesses: 0s, 1s, 2s, 4s ... up to 30s.
         const delay = failedUnlocks ? Math.min(1000 * 2 ** (failedUnlocks - 1), 30000) : 0;
         await new Promise((r) => setTimeout(r, delay));
-        lockEverything();
+        // A wrong guess leaves any open session untouched; only success replaces it.
         await vault.unlock(String(body.passphrase ?? ''));
       } catch (err) {
         if (!(err instanceof WrongPassphraseError)) throw err;
@@ -153,8 +190,9 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
       return { ok: true };
     },
 
+    // Only the open session can lock itself, so nothing else can kick you out.
     'POST /api/lock': async (req, res) => {
-      lockEverything();
+      if (sessionValid(req)) lockEverything();
       res.setHeader('Set-Cookie', 'sid=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
       return { ok: true };
     },
@@ -316,7 +354,7 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
         country_codes: ['US'],
         options: { include_optional_metadata: true },
       });
-      const logo = typeof institution.logo === 'string' && institution.logo.length < 100000 ? institution.logo : null;
+      const logo = typeof institution.logo === 'string' && institution.logo.length < 100000 && BASE64.test(institution.logo) ? institution.logo : null;
       const color = /^#[0-9a-f]{6}$/i.test(institution.primary_color || '') ? institution.primary_color : null;
       return { logo, color };
     } catch {
@@ -464,22 +502,43 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
 
   // --- Request handling ------------------------------------------------------
 
+  function sendFile(res, headers, [file, type]) {
+    for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+    res.writeHead(200, { 'Content-Type': type });
+    res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+  }
+
   async function handle(req, res) {
     const port = req.socket.localPort;
-    for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
+    const appHost = `localhost:${port}`;
+    const linkHost = `127.0.0.1:${port}`;
+    const { pathname } = new URL(req.url, 'http://localhost');
+    for (const [k, v] of Object.entries(APP_HEADERS)) res.setHeader(k, v);
+
+    // The Plaid login window's separate site serves only its own page.
+    if (req.headers.host === linkHost) {
+      if (req.method === 'GET' && LINK_FILES[pathname]) return sendFile(res, LINK_HEADERS, LINK_FILES[pathname]);
+      if (req.method === 'GET' && pathname === '/') {
+        res.writeHead(302, { Location: `http://${appHost}/` });
+        return res.end();
+      }
+      throw new HttpError(404, 'Not found');
+    }
 
     // Blocks DNS-rebinding attacks, where a malicious website points its domain at 127.0.0.1.
-    const allowedHosts = [`localhost:${port}`, `127.0.0.1:${port}`];
-    if (!allowedHosts.includes(req.headers.host)) throw new HttpError(403, 'Forbidden host');
+    if (req.headers.host !== appHost) throw new HttpError(403, 'Forbidden host');
 
-    const { pathname } = new URL(req.url, 'http://localhost');
-
-    if (req.method === 'GET' && STATIC_FILES[pathname]) {
-      const [file, type] = STATIC_FILES[pathname];
-      res.writeHead(200, { 'Content-Type': type });
-      res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
-      return;
+    // Browsers label every request with where it came from. Only the app's own
+    // pages may call the API or load its files; opening the app itself in a tab
+    // (typed, bookmarked or from a link) is always allowed.
+    const site = req.headers['sec-fetch-site'];
+    if (site && site !== 'same-origin') {
+      const opensApp = req.method === 'GET' && pathname === '/'
+        && req.headers['sec-fetch-mode'] === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+      if (!opensApp) throw new HttpError(403, 'Forbidden');
     }
+
+    if (req.method === 'GET' && APP_FILES[pathname]) return sendFile(res, {}, APP_FILES[pathname]);
 
     const route = routes[`${req.method} ${pathname}`];
     if (!route) throw new HttpError(404, 'Not found');
@@ -487,9 +546,7 @@ function createApp({ vaultPath, idleLockMs, vaultOptions }) {
     let body = {};
     if (req.method !== 'GET') {
       // Blocks other websites from sending requests to this app (CSRF).
-      if (!allowedHosts.map((h) => `http://${h}`).includes(req.headers.origin)) {
-        throw new HttpError(403, 'Forbidden origin');
-      }
+      if (req.headers.origin !== `http://${appHost}`) throw new HttpError(403, 'Forbidden origin');
       body = await readJson(req);
     }
     sendJson(res, 200, await route(req, res, body));
@@ -519,9 +576,10 @@ function readJson(req) {
     let size = 0;
     req.on('data', (chunk) => {
       size += chunk.length;
-      // Keep reading (and discarding) so the 413 reply reaches the client.
+      // Keep reading (and discarding) briefly so the 413 reply reaches the client.
       if (size > MAX_BODY_BYTES) reject(new HttpError(413, 'Request too large'));
       else chunks.push(chunk);
+      if (size > 100 * MAX_BODY_BYTES) req.destroy();
     });
     req.on('end', () => {
       if (size > MAX_BODY_BYTES) return;
@@ -549,6 +607,12 @@ function parseCookies(header = '') {
 module.exports = { createApp };
 
 if (require.main === module) {
+  // Refuse to run if something has switched off certificate checks: that would
+  // let an impostor pose as Plaid and receive your keys.
+  if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0') {
+    console.error('Refusing to start: NODE_TLS_REJECT_UNAUTHORIZED=0 disables secure connections. Remove that setting.');
+    process.exit(1);
+  }
   const port = Number(process.env.PORT || 3000);
   const app = createApp({
     vaultPath: process.env.VAULT_PATH || path.join(__dirname, 'data', 'vault.json'),
